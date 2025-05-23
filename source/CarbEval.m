@@ -1,83 +1,134 @@
-function CarbonFootprint = CarbEval(varargin)
-% CarbEval - Evaluate the carbon footprint for multiple energy sources.
+% CarbEval - A class to evaluate the carbon footprint for multiple energy sources.
 %
 % Syntax:
-%   CarbonFootprint = CarbEval('EnergySource1', Consumption1, ... , 'EnergySourceN', ConsumptionN)
+%   obj = CarbEval();
+%   result = obj.evaluate({'Electricity', 500, 'NaturalGas', 100, 'Fuel', 50});
+%   obj.exportToCSV(result.IndividualSources, 'MyCarbonReport.csv');
+%   obj.plotEmissions(result.IndividualSources.EnergySource, result.IndividualSources.Emissions_kgCO2e);
+%
+% Description:
+%   This class calculates the carbon footprint for various energy sources using
+%   defined emission factors. Users can evaluate sources, export results, and
+%   visualize the breakdown using provided methods.
 %
 % Inputs:
-%   EnergySource - Type of energy source ('Electricity', 'NaturalGas', 'Fuel')
-%   Consumption - Real-valued consumption of the energy source for each pair
+%   Cell array of pairs: {'EnergySource1', Consumption1, 'EnergySource2', Consumption2, ...}
+%   Supported sources: 'Electricity', 'NaturalGas', 'Fuel'
+%   Units: Electricity in kWh, NaturalGas in therms, Fuel in liters
 %
-% Output:
-%   CarbonFootprint - A structure containing details about the carbon footprint
-%                     of individual sources and the total carbon footprint.
+% Outputs:
+%   Struct with:
+%       - IndividualSources: table of emissions by source
+%       - TotalEmissions: total carbon footprint in kgCO2e
 %
 % Example:
-%   CarbonFootprint = CarbEval('Electricity', 500, 'NaturalGas', 100, 'Fuel', 50);
+%   % Create an instance
+%   obj = CarbEval();
+%   % Evaluate emissions
+%   result = obj.evaluate({'Electricity', 500, 'NaturalGas', 100, 'Fuel', 50});
+%   % Display total
+%   fprintf('Total Emissions: %.2f kgCO2e\n', result.TotalEmissions);
+%   % Export results to a file
+%   obj.exportToCSV(result.IndividualSources, 'MyCarbonReport.csv');
+%   % Visualize the emissions
+%   obj.plotEmissions(result.IndividualSources.EnergySource, result.IndividualSources.Emissions_kgCO2e);
 
-    % Validate the number of inputs
-    if mod(numel(varargin), 2) ~= 0
-        error('Inputs must be provided as pairs of EnergySource and Consumption.');
+classdef CarbEval
+    % CarbEval - A class to evaluate the carbon footprint for multiple energy sources.
+
+    properties
+        % Emission factors (in kgCO2e per unit)
+        EmissionFactors = struct('electricity', 0.4, ...      % kgCO2e per kWh
+                                  'naturalgas', 5.3, ...      % kgCO2e per therm
+                                  'fuel', 2.3);               % kgCO2e per liter
     end
 
-    % Default emission factors (in kgCO2e per unit)
-    emission_factors = struct('Electricity', 0.4, ...      % kgCO2e per kWh
-                               'NaturalGas', 5.3, ...      % kgCO2e per therm
-                               'Fuel', 2.3);               % kgCO2e per liter
+    methods
+        function CarbonFootprint = evaluate(obj, inputs)
+            % Evaluate - Calculates carbon footprint for multiple energy sources.
+            % Inputs:
+            %   inputs - Cell array of EnergySource and Consumption pairs.
+            % Outputs:
+            %   CarbonFootprint - Struct with IndividualSources table and TotalEmissions.
 
-    % Initialize total carbon footprint
-    total_emissions = 0;
+            if mod(numel(inputs), 2) ~= 0
+                error('Inputs must be provided as pairs of EnergySource and Consumption.');
+            end
 
-    % Initialize data for visualization and export
-    sources = {};
-    emissions = [];
+            total_emissions = 0;
+            sources = {};
+            emissions = [];
 
-    % Process each pair of inputs
-    for i = 1:2:numel(varargin)
-        EnergySource = varargin{i};
-        Consumption = varargin{i+1};
+            for i = 1:2:numel(inputs)
+                EnergySource = inputs{i};
+                Consumption = inputs{i+1};
 
-        % Validate EnergySource
-        if ~ischar(EnergySource) || ~ismember(EnergySource, fieldnames(emission_factors))
-            error('EnergySource must be one of the following: ''Electricity'', ''NaturalGas'', or ''Fuel''.');
+                if ~ischar(EnergySource)
+                    error('EnergySource must be a character array.');
+                end
+                normalized = lower(EnergySource);
+                if ~isfield(obj.EmissionFactors, normalized)
+                    validSources = fieldnames(obj.EmissionFactors);
+                    error('"%s" is not a recognized energy source. Valid options are: %s', ...
+                          EnergySource, strjoin(validSources, ', '));
+                end
+
+                if ~isnumeric(Consumption) || Consumption < 0
+                    error('Consumption must be a non-negative real number.');
+                end
+
+                current_emission = Consumption * obj.EmissionFactors.(normalized);
+                total_emissions = total_emissions + current_emission;
+
+                sources{end+1} = EnergySource; %#ok<AGROW>
+                emissions(end+1) = current_emission; %#ok<AGROW>
+
+                fprintf('Carbon Footprint for %s (%.2f units): %.2f kgCO2e\n', ...
+                        EnergySource, Consumption, current_emission);
+            end
+
+            CarbonFootprint = struct('IndividualSources', table(sources', emissions', 'VariableNames', {'EnergySource', 'Emissions_kgCO2e'}), ...
+                                      'TotalEmissions', total_emissions);
+
+            fprintf('------------------------------------------------------------\n');
+            fprintf('Total Carbon Footprint: %.2f kgCO2e\n', CarbonFootprint.TotalEmissions);
         end
 
-        % Validate Consumption
-        if ~isnumeric(Consumption) || Consumption < 0
-            error('Consumption must be a non-negative real number.');
+        function exportToCSV(~, dataTable, filename)
+            % exportToCSV - Exports the data table to a CSV file.
+            % Inputs:
+            %   dataTable - Table containing emissions data.
+            %   filename - (Optional) Name of the output CSV file.
+
+            if nargin < 3
+                filename = 'CarbonFootprintResults.csv';
+            end
+
+            try
+                writetable(dataTable, filename);
+                fprintf('Results exported to %s\n', filename);
+            catch ME
+                warning('Failed to export data: %s', ME.message);
+            end
         end
 
-        % Calculate and add to the total carbon footprint
-        current_emission = Consumption * emission_factors.(EnergySource);
-        total_emissions = total_emissions + current_emission;
+        function plotEmissions(~, sources, emissions)
+            % plotEmissions - Plots a bar chart of carbon emissions.
+            % Inputs:
+            %   sources - Cell array of energy source names.
+            %   emissions - Array of emission values.
 
-        % Store data for visualization and export
-        sources{end+1} = EnergySource; %#ok<AGROW>
-        emissions(end+1) = current_emission; %#ok<AGROW>
+            figure;
+            b = bar(categorical(sources), emissions, 'FaceColor', [0.2 0.6 0.8]);
+            title('Carbon Footprint Breakdown');
+            ylabel('Emissions (kgCO2e)');
+            xlabel('Energy Source');
+            grid on;
 
-        % Display the result for the current pair
-        fprintf('Carbon Footprint for %s (%.2f units): %.2f kgCO2e\n', ...
-                EnergySource, Consumption, current_emission);
+            xtips = b.XEndPoints;
+            ytips = b.YEndPoints;
+            labels = string(b.YData);
+            text(xtips, ytips, labels, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom');
+        end
     end
-
-    % Create output structure
-    CarbonFootprint = struct('IndividualSources', table(sources', emissions', 'VariableNames', {'EnergySource', 'Emissions_kgCO2e'}), ...
-                              'TotalEmissions', total_emissions);
-
-    % Display total carbon footprint
-    fprintf('------------------------------------------------------------\n');
-    fprintf('Total Carbon Footprint: %.2f kgCO2e\n', CarbonFootprint.TotalEmissions);
-
-    % Data visualization: Bar chart
-    figure;
-    bar(categorical(sources), emissions);
-    title('Carbon Footprint Breakdown');
-    ylabel('Emissions (kgCO2e)');
-    xlabel('Energy Source');
-    grid on;
-
-    % Export data to CSV file
-    output_filename = 'CarbonFootprintResults.csv';
-    writetable(CarbonFootprint.IndividualSources, output_filename);
-    fprintf('Results exported to %s\n', output_filename);
 end
